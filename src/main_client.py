@@ -9,8 +9,6 @@ import socket
 import os
 import sys
 
-from cryptography.fernet import InvalidToken
-
 # make sure working dir is same as file dir
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -68,11 +66,13 @@ class MainClient:
 
         try:
             self.client.connect()
-        except (InvalidToken, socket.error):  # if the server closes without warning
+        except Exception as e:  # if the server closes without warning or something happens
+            self.client.logger.debug(f"Error occurred, restarting. {e}")
+
             self.client.es.socket.close()
             del self.client
             self.start()
 
 
 if __name__ == "__main__":
-    MainClient('192.168.10.16', 3003, False, False, False).start()
+    MainClient('127.0.0.1', 3003, False, False, False).start()
